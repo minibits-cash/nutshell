@@ -206,7 +206,7 @@ class LNbitsUSDWallet(LightningBackend):
         # Retrieve the amount in dollars and convert to a float
         amount_usd = float(data.get(str(self.unit).upper()))
         # Convert dollars to cents and round up
-        amount_cent = math.ceil(amount_fiat * 100)
+        amount_cent = math.ceil(amount_usd * 100)
         # Calculate fees in cents based on the ratio of fees_sat to amount_sat and round up
         fees_cent = math.ceil(fees_sat / amount_sat * amount_cent)
 
