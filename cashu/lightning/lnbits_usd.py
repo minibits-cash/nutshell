@@ -101,8 +101,7 @@ class LNbitsUSDWallet(LightningBackend):
 
     async def pay_invoice(
         self, quote: MeltQuote, fee_limit_msat: int
-    ) -> PaymentResponse:
-        logger.debug(f"lnbits_usd pay_invoice quote: {quote}")     
+    ) -> PaymentResponse:        
         try:
             r = await self.client.post(
                 url=f"{self.endpoint}/api/v1/payments",
@@ -118,12 +117,11 @@ class LNbitsUSDWallet(LightningBackend):
             return PaymentResponse(error_message=(r.json()["detail"],))
 
         data: dict = r.json()
-        checking_id = data["payment_hash"]
-        logger.debug(f"lnbits_usd pay_invoice result: {data}")
+        checking_id = data["payment_hash"]        
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
-        logger.debug(f"lnbits_usd pay_invoice status: {payment}")     
+        logger.debug(f"lnbits_usd pay_invoice: isPaid {payment.isPaid} fee {payment.fee}")     
         return PaymentResponse(
             ok=True,
             checking_id=checking_id,
@@ -164,11 +162,17 @@ class LNbitsUSDWallet(LightningBackend):
         elif not data["paid"] and not data["details"]["pending"]:
             paid_value = False
         else:
-            raise ValueError(f"unexpected value for paid: {data['paid']}")
+            raise ValueError(f"unexpected value for paid: {data['paid']}")        
+        
+        fee_cent = 0
+        if data["details"]["fee"] > 0:
+            fee_sat = math.ceil(abs(data["details"]["fee"]) * 1000)        
+            sat_usd_rate = float(data["details"]["extra"]["wallet_fiat_rate"])
+            fee_cent = int(math.ceil(fee_sat / sat_usd_rate * 100))
 
         return PaymentStatus(
             paid=paid_value,
-            fee=Amount(unit=Unit.msat, amount=abs(data["details"]["fee"])),
+            fee=Amount(unit=Unit.usd, amount=fee_cent),
             preimage=data["preimage"],
         )
 
