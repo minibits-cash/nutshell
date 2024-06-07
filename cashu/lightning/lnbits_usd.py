@@ -121,7 +121,7 @@ class LNbitsUSDWallet(LightningBackend):
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
-        logger.debug(f"lnbits_usd pay_invoice: isPaid {payment.isPaid} fee {payment.fee}")     
+        logger.debug(f"lnbits_usd pay_invoice fee usd_cent {payment.fee}")     
         return PaymentResponse(
             ok=True,
             checking_id=checking_id,
