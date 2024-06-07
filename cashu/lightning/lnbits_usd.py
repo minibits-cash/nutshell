@@ -5,6 +5,7 @@ import httpx
 from bolt11 import (
     decode,
 )
+from loguru import logger
 
 from ..core.base import Amount, MeltQuote, PostMeltQuoteRequest, Unit
 from ..core.helpers import fee_reserve
