@@ -102,6 +102,7 @@ class LNbitsUSDWallet(LightningBackend):
     async def pay_invoice(
         self, quote: MeltQuote, fee_limit_msat: int
     ) -> PaymentResponse:
+        logger.debug(f"lnbits_usd pay_invoice quote: {quote}")     
         try:
             r = await self.client.post(
                 url=f"{self.endpoint}/api/v1/payments",
@@ -121,7 +122,7 @@ class LNbitsUSDWallet(LightningBackend):
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
-
+        logger.debug(f"lnbits_usd pay_invoice payment: {payment}")     
         return PaymentResponse(
             ok=True,
             checking_id=checking_id,
