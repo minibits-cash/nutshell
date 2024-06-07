@@ -119,10 +119,11 @@ class LNbitsUSDWallet(LightningBackend):
 
         data: dict = r.json()
         checking_id = data["payment_hash"]
+        logger.debug(f"lnbits_usd pay_invoice result: {data}")
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
-        logger.debug(f"lnbits_usd pay_invoice payment: {payment}")     
+        logger.debug(f"lnbits_usd pay_invoice status: {payment}")     
         return PaymentResponse(
             ok=True,
             checking_id=checking_id,
