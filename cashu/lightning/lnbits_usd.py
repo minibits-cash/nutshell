@@ -2,6 +2,7 @@
 from typing import Optional
 
 import httpx
+import math
 from bolt11 import (
     decode,
 )
