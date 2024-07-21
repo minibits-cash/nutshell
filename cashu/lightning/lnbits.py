@@ -10,7 +10,7 @@ from bolt11 import (
 
 from ..core.base import Amount, MeltQuote, Unit
 from ..core.helpers import fee_reserve
-from ..core.models import PostMeltQuoteRequest
+from ..core.base import PostMeltQuoteRequest
 from ..core.settings import settings
 from .base import (
     InvoiceResponse,
