@@ -1,34 +1,33 @@
-from typing import Any, Dict, List
+import asyncio
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket
 from loguru import logger
 
-from ..core.base import (
+from ..core.errors import KeysetNotFoundError
+from ..core.models import (
     GetInfoResponse,
     KeysetsResponse,
     KeysetsResponseKeyset,
     KeysResponse,
     KeysResponseKeyset,
-    MintMeltMethodSetting,
+    MintInfoContact,
     PostCheckStateRequest,
     PostCheckStateResponse,
     PostMeltQuoteRequest,
     PostMeltQuoteResponse,
     PostMeltRequest,
-    PostMeltResponse,
     PostMintQuoteRequest,
     PostMintQuoteResponse,
     PostMintRequest,
     PostMintResponse,
     PostRestoreRequest,
     PostRestoreResponse,
-    PostSplitRequest,
-    PostSplitResponse,
+    PostSwapRequest,
+    PostSwapResponse,
 )
-from ..core.errors import KeysetNotFoundError
 from ..core.settings import settings
 from ..mint.startup import ledger
-from .limit import limiter
+from .limit import limit_websocket, limiter
 
 router: APIRouter = APIRouter()
 
@@ -42,66 +41,19 @@ router: APIRouter = APIRouter()
 )
 async def info() -> GetInfoResponse:
     logger.trace("> GET /v1/info")
-
-    # determine all method-unit pairs
-    method_settings: Dict[int, List[MintMeltMethodSetting]] = {}
-    for nut in [4, 5]:
-        method_settings[nut] = []
-        for method, unit_dict in ledger.backends.items():
-            for unit in unit_dict.keys():
-                setting = MintMeltMethodSetting(method=method.name, unit=unit.name)
-
-                if nut == 4 and settings.mint_max_peg_in:
-                    setting.max_amount = settings.mint_max_peg_in
-                    setting.min_amount = 0
-                elif nut == 5 and settings.mint_max_peg_out:
-                    setting.max_amount = settings.mint_max_peg_out
-                    setting.min_amount = 0
-
-                method_settings[nut].append(setting)
-
-    supported_dict = dict(supported=True)
-
-    supported_dict = dict(supported=True)
-    mint_features: Dict[int, Any] = {
-        4: dict(
-            methods=method_settings[4],
-            disabled=settings.mint_peg_out_only,
-        ),
-        5: dict(
-            methods=method_settings[5],
-            disabled=False,
-        ),
-        7: supported_dict,
-        8: supported_dict,
-        9: supported_dict,
-        10: supported_dict,
-        11: supported_dict,
-        12: supported_dict,
-    }
-
-    # signal which method-unit pairs support MPP
-    for method, unit_dict in ledger.backends.items():
-        for unit in unit_dict.keys():
-            logger.trace(
-                f"method={method.name} unit={unit} supports_mpp={unit_dict[unit].supports_mpp}"
-            )
-            if unit_dict[unit].supports_mpp:
-                mint_features.setdefault(15, []).append(
-                    {
-                        "method": method.name,
-                        "unit": unit.name,
-                        "mpp": True,
-                    }
-                )
-
+    mint_features = ledger.mint_features()
+    contact_info = [
+        MintInfoContact(method=m, info=i)
+        for m, i in settings.mint_info_contact
+        if m and i
+    ]
     return GetInfoResponse(
         name=settings.mint_info_name,
         pubkey=ledger.pubkey.serialize().hex() if ledger.pubkey else None,
         version=f"Nutshell/{settings.version}",
         description=settings.mint_info_description,
         description_long=settings.mint_info_description_long,
-        contact=settings.mint_info_contact,
+        contact=contact_info,
         nuts=mint_features,
         motd=settings.mint_info_motd,
     )
@@ -182,7 +134,10 @@ async def keysets() -> KeysetsResponse:
     for id, keyset in ledger.keysets.items():
         keysets.append(
             KeysetsResponseKeyset(
-                id=id, unit=keyset.unit.name, active=keyset.active or False
+                id=keyset.id,
+                unit=keyset.unit.name,
+                active=keyset.active,
+                input_fee_ppk=keyset.input_fee_ppk,
             )
         )
     return KeysetsResponse(keysets=keysets)
@@ -211,6 +166,7 @@ async def mint_quote(
         request=quote.request,
         quote=quote.quote,
         paid=quote.paid,
+        state=quote.state.value,
         expiry=quote.expiry,
     )
     logger.trace(f"< POST /v1/mint/quote/bolt11: {resp}")
@@ -234,10 +190,31 @@ async def get_mint_quote(request: Request, quote: str) -> PostMintQuoteResponse:
         quote=mint_quote.quote,
         request=mint_quote.request,
         paid=mint_quote.paid,
+        state=mint_quote.state.value,
         expiry=mint_quote.expiry,
     )
     logger.trace(f"< GET /v1/mint/quote/bolt11/{quote}")
     return resp
+
+
+@router.websocket("/v1/ws", name="Websocket endpoint for subscriptions")
+async def websocket_endpoint(websocket: WebSocket):
+    limit_websocket(websocket)
+    try:
+        client = ledger.events.add_client(websocket, ledger.db, ledger.crud)
+    except Exception as e:
+        logger.debug(f"Exception: {e}")
+        await asyncio.wait_for(websocket.close(), timeout=1)
+        return
+
+    try:
+        # this will block until the session is closed
+        await client.start()
+    except Exception as e:
+        logger.debug(f"Exception: {e}")
+        ledger.events.remove_client(client)
+    finally:
+        await asyncio.wait_for(websocket.close(), timeout=1)
 
 
 @router.post(
@@ -304,6 +281,7 @@ async def get_melt_quote(request: Request, quote: str) -> PostMeltQuoteResponse:
         amount=melt_quote.amount,
         fee_reserve=melt_quote.fee_reserve,
         paid=melt_quote.paid,
+        state=melt_quote.state.value,
         expiry=melt_quote.expiry,
     )
     logger.trace(f"< GET /v1/melt/quote/bolt11/{quote}")
@@ -317,23 +295,20 @@ async def get_melt_quote(request: Request, quote: str) -> PostMeltQuoteResponse:
         "Melt tokens for a Bitcoin payment that the mint will make for the user in"
         " exchange"
     ),
-    response_model=PostMeltResponse,
+    response_model=PostMeltQuoteResponse,
     response_description=(
         "The state of the payment, a preimage as proof of payment, and a list of"
         " promises for change."
     ),
 )
 @limiter.limit(f"{settings.mint_transaction_rate_limit_per_minute}/minute")
-async def melt(request: Request, payload: PostMeltRequest) -> PostMeltResponse:
+async def melt(request: Request, payload: PostMeltRequest) -> PostMeltQuoteResponse:
     """
     Requests tokens to be destroyed and sent out via Lightning.
     """
     logger.trace(f"> POST /v1/melt/bolt11: {payload}")
-    preimage, change_promises = await ledger.melt(
+    resp = await ledger.melt(
         proofs=payload.inputs, quote=payload.quote, outputs=payload.outputs
-    )
-    resp = PostMeltResponse(
-        paid=True, payment_preimage=preimage, change=change_promises
     )
     logger.trace(f"< POST /v1/melt/bolt11: {resp}")
     return resp
@@ -343,7 +318,7 @@ async def melt(request: Request, payload: PostMeltRequest) -> PostMeltResponse:
     "/v1/swap",
     name="Swap tokens",
     summary="Swap inputs for outputs of the same value",
-    response_model=PostSplitResponse,
+    response_model=PostSwapResponse,
     response_description=(
         "An array of blinded signatures that can be used to create proofs."
     ),
@@ -351,20 +326,20 @@ async def melt(request: Request, payload: PostMeltRequest) -> PostMeltResponse:
 @limiter.limit(f"{settings.mint_transaction_rate_limit_per_minute}/minute")
 async def swap(
     request: Request,
-    payload: PostSplitRequest,
-) -> PostSplitResponse:
+    payload: PostSwapRequest,
+) -> PostSwapResponse:
     """
-    Requests a set of Proofs to be split into two a new set of BlindedSignatures.
+    Requests a set of Proofs to be swapped for another set of BlindSignatures.
 
-    This endpoint is used by Alice to split a set of proofs before making a payment to Carol.
-    It is then used by Carol (by setting split=total) to redeem the tokens.
+    This endpoint can be used by Alice to swap a set of proofs before making a payment to Carol.
+    It can then used by Carol to redeem the tokens for new proofs.
     """
     logger.trace(f"> POST /v1/swap: {payload}")
     assert payload.outputs, Exception("no outputs provided.")
 
-    signatures = await ledger.split(proofs=payload.inputs, outputs=payload.outputs)
+    signatures = await ledger.swap(proofs=payload.inputs, outputs=payload.outputs)
 
-    return PostSplitResponse(signatures=signatures)
+    return PostSwapResponse(signatures=signatures)
 
 
 @router.post(
@@ -382,7 +357,7 @@ async def check_state(
 ) -> PostCheckStateResponse:
     """Check whether a secret has been spent already or not."""
     logger.trace(f"> POST /v1/checkstate: {payload}")
-    proof_states = await ledger.check_proofs_state(payload.Ys)
+    proof_states = await ledger.db_read.get_proofs_states(payload.Ys)
     return PostCheckStateResponse(states=proof_states)
 
 

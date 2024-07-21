@@ -2,6 +2,9 @@
 import asyncio
 import json
 from typing import AsyncGenerator, Optional
+import asyncio
+import json
+from typing import AsyncGenerator, Optional
 
 import httpx
 from bolt11 import (
@@ -10,7 +13,7 @@ from bolt11 import (
 
 from ..core.base import Amount, MeltQuote, Unit
 from ..core.helpers import fee_reserve
-from ..core.base import PostMeltQuoteRequest
+from ..core.models import PostMeltQuoteRequest
 from ..core.settings import settings
 from .base import (
     InvoiceResponse,

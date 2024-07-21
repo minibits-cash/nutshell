@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
-from typing import Coroutine, Optional, Union
+from typing import AsyncGenerator, Coroutine, Optional, Union
 
 from pydantic import BaseModel
 
 from ..core.base import (
     Amount,
     MeltQuote,
-    PostMeltQuoteRequest,
     Unit,
 )
+from ..core.models import PostMeltQuoteRequest
 
 
 class StatusResponse(BaseModel):
@@ -68,6 +68,7 @@ class PaymentStatus(BaseModel):
 
 class LightningBackend(ABC):
     supports_mpp: bool = False
+    supports_incoming_payment_stream: bool = False
     supported_units: set[Unit]
     unit: Unit
 
@@ -124,9 +125,9 @@ class LightningBackend(ABC):
     # ) -> InvoiceQuoteResponse:
     #     pass
 
-    # @abstractmethod
-    # def paid_invoices_stream(self) -> AsyncGenerator[str, None]:
-    #     pass
+    @abstractmethod
+    def paid_invoices_stream(self) -> AsyncGenerator[str, None]:
+        pass
 
 
 class Unsupported(Exception):

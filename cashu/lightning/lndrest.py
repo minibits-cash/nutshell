@@ -12,8 +12,9 @@ from bolt11 import (
 )
 from loguru import logger
 
-from ..core.base import Amount, MeltQuote, PostMeltQuoteRequest, Unit
+from ..core.base import Amount, MeltQuote, Unit
 from ..core.helpers import fee_reserve
+from ..core.models import PostMeltQuoteRequest
 from ..core.settings import settings
 from .base import (
     InvoiceResponse,
@@ -30,6 +31,7 @@ class LndRestWallet(LightningBackend):
     """https://api.lightning.community/rest/index.html#lnd-rest-api-reference"""
 
     supports_mpp = settings.mint_lnd_enable_mpp
+    supports_incoming_payment_stream = True
     supported_units = set([Unit.sat, Unit.msat])
     unit = Unit.sat
 
@@ -38,6 +40,7 @@ class LndRestWallet(LightningBackend):
         self.unit = unit
         endpoint = settings.mint_lnd_rest_endpoint
         cert = settings.mint_lnd_rest_cert
+        cert_verify = settings.mint_lnd_rest_cert_verify
 
         macaroon = (
             settings.mint_lnd_rest_macaroon
@@ -46,16 +49,19 @@ class LndRestWallet(LightningBackend):
         )
 
         if not endpoint:
-            raise Exception("cannot initialize lndrest: no endpoint")
+            raise Exception("cannot initialize LndRestWallet: no endpoint")
 
         if not macaroon:
-            raise Exception("cannot initialize lndrest: no macaroon")
+            raise Exception("cannot initialize LndRestWallet: no macaroon")
 
         if not cert:
             logger.warning(
-                "no certificate for lndrest provided, this only works if you have a"
+                "no certificate for LndRestWallet provided, this only works if you have a"
                 " publicly issued certificate"
             )
+
+        if not cert_verify:
+            logger.warning("certificate validation will be disabled for LndRestWallet")
 
         endpoint = endpoint[:-1] if endpoint.endswith("/") else endpoint
         endpoint = (
@@ -68,6 +74,10 @@ class LndRestWallet(LightningBackend):
         # and it will still check for validity of certificate and fail if its not valid
         # even on startup
         self.cert = cert or True
+
+        # disable cert verify if choosen
+        if not cert_verify:
+            self.cert = False
 
         self.auth = {"Grpc-Metadata-macaroon": self.macaroon}
         self.client = httpx.AsyncClient(
@@ -375,8 +385,8 @@ class LndRestWallet(LightningBackend):
     ) -> PaymentQuoteResponse:
         # get amount from melt_quote or from bolt11
         amount = (
-            Amount(Unit[melt_quote.unit], melt_quote.amount)
-            if melt_quote.amount
+            Amount(Unit[melt_quote.unit], melt_quote.mpp_amount)
+            if melt_quote.is_mpp
             else None
         )
 

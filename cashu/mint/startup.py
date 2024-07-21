@@ -34,6 +34,7 @@ for key, value in settings.dict().items():
         "mint_lnd_rest_admin_macaroon",
         "mint_lnd_rest_invoice_macaroon",
         "mint_corelightning_rest_macaroon",
+        "mint_clnrest_rune",
     ]:
         value = "********" if value is not None else None
 
@@ -55,6 +56,11 @@ if settings.mint_backend_bolt11_usd:
         unit=Unit.usd
     )
     backends.setdefault(Method.bolt11, {})[Unit.usd] = backend_bolt11_usd
+if settings.mint_backend_bolt11_eur:
+    backend_bolt11_eur = getattr(wallets_module, settings.mint_backend_bolt11_eur)(
+        unit=Unit.eur
+    )
+    backends.setdefault(Method.bolt11, {})[Unit.eur] = backend_bolt11_eur
 if not backends:
     raise Exception("No backends are set.")
 
@@ -92,3 +98,9 @@ async def start_mint_init():
     await ledger.startup_ledger()
     logger.info("Mint started.")
     # asyncio.create_task(rotate_keys())
+
+
+async def shutdown_mint():
+    await ledger.shutdown_ledger()
+    logger.info("Mint shutdown.")
+    logger.remove()

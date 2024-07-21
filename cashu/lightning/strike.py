@@ -1,10 +1,11 @@
 # type: ignore
 import secrets
-from typing import Dict, Optional
+from typing import AsyncGenerator, Dict, Optional
 
 import httpx
 
-from ..core.base import Amount, MeltQuote, PostMeltQuoteRequest, Unit
+from ..core.base import Amount, MeltQuote, Unit
+from ..core.models import PostMeltQuoteRequest
 from ..core.settings import settings
 from .base import (
     InvoiceResponse,
@@ -15,16 +16,20 @@ from .base import (
     StatusResponse,
 )
 
+USDT = "USDT"
 
-class StrikeUSDWallet(LightningBackend):
-    """https://github.com/lnbits/lnbits"""
 
-    supported_units = [Unit.usd]
+class StrikeWallet(LightningBackend):
+    """https://docs.strike.me/api/"""
 
-    def __init__(self, unit: Unit = Unit.usd, **kwargs):
+    supported_units = [Unit.sat, Unit.usd, Unit.eur]
+    currency_map = {Unit.sat: "BTC", Unit.usd: "USD", Unit.eur: "EUR"}
+
+    def __init__(self, unit: Unit, **kwargs):
         self.assert_unit_supported(unit)
         self.unit = unit
         self.endpoint = "https://api.strike.me"
+        self.currency = self.currency_map[self.unit]
 
         # bearer auth with settings.mint_strike_key
         bearer_auth = {
@@ -56,8 +61,30 @@ class StrikeUSDWallet(LightningBackend):
             )
 
         for balance in data:
-            if balance["currency"] == "USD":
-                return StatusResponse(error_message=None, balance=balance["total"])
+            if balance["currency"] == self.currency:
+                return StatusResponse(
+                    error_message=None,
+                    balance=Amount.from_float(
+                        float(balance["total"]), self.unit
+                    ).amount,
+                )
+
+        # if no the unit is USD but no USD balance was found, we try USDT
+        if self.unit == Unit.usd:
+            for balance in data:
+                if balance["currency"] == USDT:
+                    self.currency = USDT
+                    return StatusResponse(
+                        error_message=None,
+                        balance=Amount.from_float(
+                            float(balance["total"]), self.unit
+                        ).amount,
+                    )
+
+        return StatusResponse(
+            error_message=f"Could not find balance for currency {self.currency}",
+            balance=0,
+        )
 
     async def create_invoice(
         self,
@@ -78,7 +105,7 @@ class StrikeUSDWallet(LightningBackend):
         payload = {
             "correlationId": secrets.token_hex(16),
             "description": "Invoice for order 123",
-            "amount": {"amount": str(amount.amount / 100), "currency": "USD"},
+            "amount": {"amount": amount.to_float_string(), "currency": self.currency},
         }
         try:
             r = await self.client.post(url=f"{self.endpoint}/v1/invoices", json=payload)
@@ -125,7 +152,7 @@ class StrikeUSDWallet(LightningBackend):
         try:
             r = await self.client.post(
                 url=f"{self.endpoint}/v1/payment-quotes/lightning",
-                json={"sourceCurrency": "USD", "lnInvoice": bolt11},
+                json={"sourceCurrency": self.currency, "lnInvoice": bolt11},
                 timeout=None,
             )
             r.raise_for_status()
@@ -134,11 +161,11 @@ class StrikeUSDWallet(LightningBackend):
             raise Exception(error_message)
         data = r.json()
 
-        amount_cent = int(float(data.get("amount").get("amount")) * 100)
+        amount = Amount.from_float(float(data.get("amount").get("amount")), self.unit)
         quote = PaymentQuoteResponse(
-            amount=Amount(Unit.usd, amount=amount_cent),
+            amount=amount,
             checking_id=data.get("paymentQuoteId"),
-            fee=Amount(Unit.usd, 0),
+            fee=Amount(self.unit, 0),
         )
         return quote
 
@@ -198,3 +225,6 @@ class StrikeUSDWallet(LightningBackend):
             fee_msat=data["details"]["fee"],
             preimage=data["preimage"],
         )
+
+    async def paid_invoices_stream(self) -> AsyncGenerator[str, None]:
+        raise NotImplementedError("paid_invoices_stream not implemented")

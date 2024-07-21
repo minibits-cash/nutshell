@@ -2,7 +2,8 @@ import pytest
 import respx
 from httpx import Response
 
-from cashu.core.base import Amount, MeltQuote, PostMeltQuoteRequest, Unit
+from cashu.core.base import Amount, MeltQuote, MeltQuoteState, Unit
+from cashu.core.models import PostMeltQuoteRequest
 from cashu.core.settings import settings
 from cashu.lightning.blink import MINIMUM_FEE_MSAT, BlinkWallet  # type: ignore
 
@@ -98,6 +99,7 @@ async def test_blink_pay_invoice():
         amount=100,
         fee_reserve=12,
         paid=False,
+        state=MeltQuoteState.unpaid,
     )
     payment = await blink.pay_invoice(quote, 1000)
     assert payment.ok
@@ -130,6 +132,7 @@ async def test_blink_pay_invoice_failure():
         amount=100,
         fee_reserve=12,
         paid=False,
+        state=MeltQuoteState.unpaid,
     )
     payment = await blink.pay_invoice(quote, 1000)
     assert not payment.ok
