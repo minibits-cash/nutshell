@@ -91,7 +91,7 @@ class LNbitsUSDWallet(LightningBackend):
                 url=f"{self.endpoint}/api/v1/payments", json=data
             )
             r.raise_for_status()
-         except Exception as e:
+        except Exception as e:
             return InvoiceResponse(ok=False, error_message=str(e))
 
         data = r.json()
