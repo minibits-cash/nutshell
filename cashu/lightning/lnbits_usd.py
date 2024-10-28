@@ -79,7 +79,7 @@ class LNbitsUSDWallet(LightningBackend):
         self.assert_unit_supported(amount.unit)
         
         amount_lnbits = float(amount.amount / 100)
-        data = {"out": False, "amount": amount_lnbits, "unit": "usd"}
+        data = {"out": False, "amount": amount_lnbits, "unit": "USD"}
         if description_hash:
             data["description_hash"] = description_hash.hex()
         if unhashed_description:
@@ -224,12 +224,12 @@ class LNbitsUSDWallet(LightningBackend):
         amount_sat = amount.to(Unit.sat, round="up").amount
         fees_sat = fees.to(Unit.sat, round="up").amount
         # usd rate conversion
-        logger.debug(f"lnbits conversion request: {amount_sat} sat to usd")        
+        logger.debug(f"lnbits conversion request: {amount_sat} sat to USD")        
         r = None  # Initialize r before the try block
         try:
             r = await self.client.post(
                 url=f"{self.endpoint}/api/v1/conversion",
-                json={"from_": "sat", "amount": amount_sat,  "to": "usd"},
+                json={"from_": "sat", "amount": amount_sat,  "to": "USD"},
                 timeout=None,
             )
             r.raise_for_status()
