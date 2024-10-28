@@ -11,6 +11,7 @@ from bolt11 import (
     decode,
 )
 from loguru import logger
+import math
 
 from ..core.base import Amount, MeltQuote, Unit
 from ..core.helpers import fee_reserve
