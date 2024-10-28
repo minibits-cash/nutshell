@@ -2,9 +2,6 @@
 import asyncio
 import json
 from typing import AsyncGenerator, Optional
-import asyncio
-import json
-from typing import AsyncGenerator, Optional
 
 import httpx
 from bolt11 import (
@@ -131,12 +128,6 @@ class LNbitsWallet(LightningBackend):
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
-
-        if not payment.paid:
-            return PaymentResponse(
-                ok=False,
-                error_message="Payment failed.",
-            )
 
         return PaymentResponse(
             result=payment.result,
