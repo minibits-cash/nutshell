@@ -20,6 +20,7 @@ from .base import (
     LightningBackend,
     PaymentQuoteResponse,
     PaymentResponse,
+    PaymentResult,
     PaymentStatus,
     StatusResponse,
 )
@@ -28,8 +29,10 @@ from .base import (
 class LNbitsUSDWallet(LightningBackend):
     """https://github.com/lnbits/lnbits"""
 
-    supported_units = set([Unit.usd])
+    supported_units = {Unit.usd}
     unit = Unit.usd
+    supports_incoming_payment_stream: bool = True
+    supports_description: bool = True
 
     def __init__(self, unit: Unit = Unit.usd, **kwargs):
         self.assert_unit_supported(unit)
@@ -88,11 +91,8 @@ class LNbitsUSDWallet(LightningBackend):
                 url=f"{self.endpoint}/api/v1/payments", json=data
             )
             r.raise_for_status()
-        except Exception:
-            return InvoiceResponse(
-                ok=False,
-                error_message=r.json()["detail"],
-            )
+         except Exception as e:
+            return InvoiceResponse(ok=False, error_message=str(e))
 
         data = r.json()
         checking_id, payment_request = data["checking_id"], data["payment_request"]
@@ -114,14 +114,17 @@ class LNbitsUSDWallet(LightningBackend):
             )
             r.raise_for_status()
         except Exception:
-            return PaymentResponse(error_message=r.json()["detail"])
-        if r.status_code > 299:
-            return PaymentResponse(error_message=(f"HTTP status: {r.reason_phrase}",))
-        if "detail" in r.json():
-            return PaymentResponse(error_message=(r.json()["detail"],))
+            error_message = r.json().get("detail") or r.reason_phrase
+            return PaymentResponse(
+                result=PaymentResult.FAILED, error_message=error_message
+            )
+        if r.json().get("detail"):
+            return PaymentResponse(
+                result=PaymentResult.FAILED, error_message=(r.json()["detail"],)
+            )
 
         data: dict = r.json()
-        checking_id = data["payment_hash"]        
+        checking_id = data.get("payment_hash")
 
         # we do this to get the fee and preimage
         payment: PaymentStatus = await self.get_payment_status(checking_id)
@@ -134,7 +137,7 @@ class LNbitsUSDWallet(LightningBackend):
             )
      
         return PaymentResponse(
-            ok=payment.paid,
+            result=payment.result,
             checking_id=checking_id,
             fee=payment.fee,
             preimage=payment.preimage,
@@ -146,12 +149,28 @@ class LNbitsUSDWallet(LightningBackend):
                 url=f"{self.endpoint}/api/v1/payments/{checking_id}"
             )
             r.raise_for_status()
-        except Exception:
-            return PaymentStatus(paid=None)
+        except Exception as e:
+            return PaymentStatus(result=PaymentResult.UNKNOWN, error_message=str(e))
         data: dict = r.json()
         if data.get("detail"):
-            return PaymentStatus(paid=None)
-        return PaymentStatus(paid=r.json()["paid"])
+            return PaymentStatus(
+                result=PaymentResult.UNKNOWN, error_message=data["detail"]
+            )
+        
+        if data["paid"]:
+            result = PaymentResult.SETTLED
+        elif not data["paid"] and data["details"]["pending"]:
+            result = PaymentResult.PENDING
+        elif not data["paid"] and not data["details"]["pending"]:
+            result = PaymentResult.FAILED
+        else:
+            result = PaymentResult.UNKNOWN
+
+        return PaymentStatus(
+            result=result,
+            fee=Amount(unit=Unit.msat, amount=abs(data["details"]["fee"])),
+            preimage=data["preimage"],
+        )
 
     async def get_payment_status(self, checking_id: str) -> PaymentStatus:
         try:
@@ -159,21 +178,26 @@ class LNbitsUSDWallet(LightningBackend):
                 url=f"{self.endpoint}/api/v1/payments/{checking_id}"
             )
             r.raise_for_status()
-        except Exception:
-            return PaymentStatus(paid=None)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise e
+            return PaymentStatus(
+                result=PaymentResult.UNKNOWN, error_message=e.response.text
+            )
         data = r.json()
         if "paid" not in data and "details" not in data:
-            return PaymentStatus(paid=None)
-
-        paid_value = None
+            return PaymentStatus(
+                result=PaymentResult.UNKNOWN, error_message="invalid response"
+            )
+        
         if data["paid"]:
-            paid_value = True
+            result = PaymentResult.SETTLED
         elif not data["paid"] and data["details"]["pending"]:
-            paid_value = None
+            result = PaymentResult.PENDING
         elif not data["paid"] and not data["details"]["pending"]:
-            paid_value = False
+            result = PaymentResult.FAILED
         else:
-            raise ValueError(f"unexpected value for paid: {data['paid']}")        
+            result = PaymentResult.UNKNOWN        
         
         fee_cent = 0
         if data["details"]["fee"] > 0:
@@ -182,7 +206,7 @@ class LNbitsUSDWallet(LightningBackend):
             fee_cent = int(math.ceil(fee_sat / sat_usd_rate * 100))
 
         return PaymentStatus(
-            paid=paid_value,
+            result=result,
             fee=Amount(unit=Unit.usd, amount=fee_cent),
             preimage=data["preimage"],
         )
@@ -191,11 +215,9 @@ class LNbitsUSDWallet(LightningBackend):
         self, melt_quote: PostMeltQuoteRequest
     ) -> PaymentQuoteResponse:
         invoice_obj = decode(melt_quote.request)
-        assert invoice_obj.amount_msat, "invoice has no amount."
-        
+        assert invoice_obj.amount_msat, "invoice has no amount."        
         amount_msat = int(invoice_obj.amount_msat)
-        fees_msat = fee_reserve(amount_msat)
-        
+        fees_msat = fee_reserve(amount_msat)        
         fees = Amount(unit=Unit.msat, amount=fees_msat)
         amount = Amount(unit=Unit.msat, amount=amount_msat)
          
@@ -229,12 +251,11 @@ class LNbitsUSDWallet(LightningBackend):
 
         logger.debug(f"PaymentQuoteResponse: amount={amount_cent}, checking_id={invoice_obj.payment_hash}, fee={fees_cent}")
 
-        quote = PaymentQuoteResponse(
-            amount=Amount(self.unit, amount=amount_cent),
+        return PaymentQuoteResponse(
             checking_id=invoice_obj.payment_hash,
             fee=Amount(self.unit, amount=fees_cent),
+            amount=Amount(self.unit, amount=amount_cent),
         )
-        return quote
     
     async def paid_invoices_stream(self) -> AsyncGenerator[str, None]:
         url = f"{self.endpoint}/api/v1/payments/sse"
