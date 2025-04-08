@@ -11,7 +11,6 @@ from ..core.models import (
     KeysetsResponseKeyset,
     KeysResponse,
     KeysResponseKeyset,
-    MintInfoContact,
     PostCheckStateRequest,
     PostCheckStateResponse,
     PostMeltQuoteRequest,
@@ -44,23 +43,19 @@ redis = RedisCache()
 )
 async def info() -> GetInfoResponse:
     logger.trace("> GET /v1/info")
-    mint_features = ledger.mint_features()
-    contact_info = [
-        MintInfoContact(method=m, info=i)
-        for m, i in settings.mint_info_contact
-        if m and i
-    ]
+    mint_info = ledger.mint_info
     return GetInfoResponse(
-        name=settings.mint_info_name,
-        pubkey=ledger.pubkey.serialize().hex() if ledger.pubkey else None,
-        version=f"Nutshell/{settings.version}",
-        description=settings.mint_info_description,
-        description_long=settings.mint_info_description_long,
-        contact=contact_info,
-        nuts=mint_features,
-        icon_url=settings.mint_info_icon_url,
+        name=mint_info.name,
+        pubkey=mint_info.pubkey,
+        version=mint_info.version,
+        description=mint_info.description,
+        description_long=mint_info.description_long,
+        contact=mint_info.contact,
+        nuts=mint_info.nuts,
+        icon_url=mint_info.icon_url,
+        tos_url=mint_info.tos_url,
         urls=settings.mint_info_urls,
-        motd=settings.mint_info_motd,
+        motd=mint_info.motd,
         time=int(time.time()),
     )
 
@@ -169,8 +164,10 @@ async def mint_quote(
     logger.trace(f"> POST /v1/mint/quote/bolt11: payload={payload}")
     quote = await ledger.mint_quote(payload)
     resp = PostMintQuoteResponse(
-        request=quote.request,
         quote=quote.quote,
+        request=quote.request,
+        amount=quote.amount,
+        unit=quote.unit,
         paid=quote.paid,  # deprecated
         state=quote.state.value,
         expiry=quote.expiry,
@@ -196,6 +193,8 @@ async def get_mint_quote(request: Request, quote: str) -> PostMintQuoteResponse:
     resp = PostMintQuoteResponse(
         quote=mint_quote.quote,
         request=mint_quote.request,
+        amount=mint_quote.amount,
+        unit=mint_quote.unit,
         paid=mint_quote.paid,  # deprecated
         state=mint_quote.state.value,
         expiry=mint_quote.expiry,
@@ -296,6 +295,8 @@ async def get_melt_quote(request: Request, quote: str) -> PostMeltQuoteResponse:
     resp = PostMeltQuoteResponse(
         quote=melt_quote.quote,
         amount=melt_quote.amount,
+        unit=melt_quote.unit,
+        request=melt_quote.request,
         fee_reserve=melt_quote.fee_reserve,
         paid=melt_quote.paid,
         state=melt_quote.state.value,

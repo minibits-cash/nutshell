@@ -183,14 +183,14 @@ async def test_mint(wallet1: Wallet):
     assert wallet1.balance == 64
 
     # verify that proofs in proofs_used db have the same mint_id as the invoice in the db
-    mint_quote = await get_bolt11_mint_quote(db=wallet1.db, quote=mint_quote.quote)
-    assert mint_quote
+    mint_quote_2 = await get_bolt11_mint_quote(db=wallet1.db, quote=mint_quote.quote)
+    assert mint_quote_2
     proofs_minted = await get_proofs(
-        db=wallet1.db, mint_id=mint_quote.quote, table="proofs"
+        db=wallet1.db, mint_id=mint_quote_2.quote, table="proofs"
     )
     assert len(proofs_minted) == len(expected_proof_amounts)
     assert all([p.amount in expected_proof_amounts for p in proofs_minted])
-    assert all([p.mint_id == mint_quote.quote for p in proofs_minted])
+    assert all([p.mint_id == mint_quote_2.quote for p in proofs_minted])
 
 
 @pytest.mark.asyncio
@@ -221,9 +221,10 @@ async def test_mint_amounts_wrong_order(wallet1: Wallet):
     """Mint amount that is not part in 2^n"""
     amts = [1, 2, 3]
     mint_quote = await wallet1.request_mint(sum(amts))
+    allowed_amounts = wallet1.get_allowed_amounts()
     await assert_err(
         wallet1.mint(amount=sum(amts), split=[1, 2, 3], quote_id=mint_quote.quote),
-        f"Can only mint amounts with 2^n up to {2**settings.max_order}.",
+        f"Can only mint amounts supported by the mint: {allowed_amounts}",
     )
 
 
@@ -356,7 +357,7 @@ async def test_swap_to_send_more_than_balance(wallet1: Wallet):
     await wallet1.mint(64, quote_id=mint_quote.quote)
     await assert_err(
         wallet1.swap_to_send(wallet1.proofs, 128, set_reserved=True),
-        "balance too low.",
+        "Balance too low",
     )
     assert wallet1.balance == 64
     assert wallet1.available_balance == 64
@@ -383,7 +384,7 @@ async def test_duplicate_proofs_double_spent(wallet1: Wallet):
     doublespend = await wallet1.mint(64, quote_id=mint_quote.quote)
     await assert_err(
         wallet1.split(wallet1.proofs + doublespend, 20),
-        "Mint Error: duplicate proofs.",
+        "Mint Error: Duplicate inputs provided",
     )
     assert wallet1.balance == 64
     assert wallet1.available_balance == 64

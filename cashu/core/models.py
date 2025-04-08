@@ -38,6 +38,11 @@ class MintInfoContact(BaseModel):
     info: str
 
 
+class MintInfoProtectedEndpoint(BaseModel):
+    method: str
+    path: str
+
+
 class GetInfoResponse(BaseModel):
     name: Optional[str] = None
     pubkey: Optional[str] = None
@@ -47,6 +52,7 @@ class GetInfoResponse(BaseModel):
     contact: Optional[List[MintInfoContact]] = None
     motd: Optional[str] = None
     icon_url: Optional[str] = None
+    tos_url: Optional[str] = None
     urls: Optional[List[str]] = None
     time: Optional[int] = None
     nuts: Optional[Dict[int, Any]] = None
@@ -57,7 +63,7 @@ class GetInfoResponse(BaseModel):
     # BEGIN DEPRECATED: NUT-06 contact field change
     # NUT-06 PR: https://github.com/cashubtc/nuts/pull/117
     @root_validator(pre=True)
-    def preprocess_deprecated_contact_field(cls, values):
+    def preprocess_deprecated_contact_field(cls, values: dict):
         if "contact" in values and values["contact"]:
             if isinstance(values["contact"][0], list):
                 values["contact"] = [
@@ -136,6 +142,8 @@ class PostMintQuoteRequest(BaseModel):
 class PostMintQuoteResponse(BaseModel):
     quote: str  # quote id
     request: str  # input payment request
+    amount: Optional[int]  # output amount (optional for backwards compat pre 0.16.6)
+    unit: Optional[str]  # output unit (optional for backwards compat pre 0.16.6)
     state: Optional[str]  # state of the quote (optional for backwards compat)
     expiry: Optional[int]  # expiry of the quote
     pubkey: Optional[str] = None  # NUT-20 quote lock pubkey
@@ -217,6 +225,10 @@ class PostMeltQuoteRequest(BaseModel):
 class PostMeltQuoteResponse(BaseModel):
     quote: str  # quote id
     amount: int  # input amount
+    unit: Optional[str]  # input unit (optional for backwards compat pre 0.16.6)
+    request: Optional[
+        str
+    ]  # output payment request (optional for backwards compat pre 0.16.6)
     fee_reserve: int  # input fee reserve
     paid: Optional[bool] = (
         None  # whether the request has been paid # DEPRECATED as per NUT PR #136
@@ -346,3 +358,16 @@ class PostRestoreResponse(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
         self.promises = self.signatures
+
+
+# ------- API: BLIND AUTH -------
+class PostAuthBlindMintRequest(BaseModel):
+    outputs: List[BlindedMessage] = Field(
+        ...,
+        max_items=settings.mint_max_request_length,
+        description="Blinded messages for creating blind auth tokens.",
+    )
+
+
+class PostAuthBlindMintResponse(BaseModel):
+    signatures: List[BlindedSignature] = []
